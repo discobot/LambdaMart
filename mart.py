@@ -4,7 +4,7 @@ import numpy as np
 from optparse import OptionParser
 from sklearn.tree import DecisionTreeRegressor
 from collections import defaultdict
-
+import time
 
 class Ensemble:
     def __init__(self, rate):
@@ -88,6 +88,7 @@ def learn(train_file, ntrees=3, learning_rate=0.1, val_file=None):
     # validation_output = np.array([0] * len(validation))
     # best_validation_score = 0
     lambdas = np.array(scores)
+    start = time.clock()
 
     for i in range(ntrees):
         print "  Iteration: " + str(i)
@@ -96,8 +97,11 @@ def learn(train_file, ntrees=3, learning_rate=0.1, val_file=None):
         lambdas = compute_lambdas(lambdas)
 
         # create tree and append it to the model
+        print "  --fitting tree"
         tree = DecisionTreeRegressor()
         tree.fit(features, lambdas)
+        print "  ---done"
+        print (time.clock() - start), "s"
         ensemble.add(tree)
 
         # update model score
@@ -108,8 +112,11 @@ def learn(train_file, ntrees=3, learning_rate=0.1, val_file=None):
             model_output += learning_rate * predictions
 
         # train_score
+        print "  scoring on train"
+        print (time.clock() - start), "s"
         train_score = ndcg(model_output, scores, queries, 10)
         print "    iteration train score " + str(train_score)
+        print (time.clock() - start), "s"
 
         # validation score
         # if len(validation) != 0:
