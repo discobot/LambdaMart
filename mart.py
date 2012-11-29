@@ -5,6 +5,9 @@ import math
 from optparse import OptionParser
 from sklearn.tree import DecisionTreeRegressor
 from collections import defaultdict
+from copy import deepcopy
+from multiprocessing import Pool
+from itertools import chain
 import time
 
 class Ensemble:
@@ -64,7 +67,7 @@ def compute_dcg(array):
 
 def compute_ndcg(prediction, true, k=10):
     prediction = prediction
-    true = true
+    true = sorted(true)
 
     true = sorted(zip(prediction, true), reverse=True, key=lambda x: x[0])
     true = [tr[1] for tr in true]
@@ -91,42 +94,40 @@ def ndcg(prediction, true_score, query, k=10):
         total_ndcg.append(compute_ndcg(true_pages[q], pred_pages[q], k))
     return sum(total_ndcg) / len(total_ndcg)
 
-def query_lambdas(true_page, pred_page):
-    pass
+
+def query_lambdas(page):
+    true_page, pred_page = page
+    lambdas = [float(0)] * len(true_page)
+    for i in xrange(len(true_page)):
+        for j in xrange(i):
+            ndsg_before = compute_ndcg(pred_page, true_page, 10)
+            new_pred_page = deepcopy(pred_page)
+            new_pred_page[i], new_pred_page[j] = new_pred_page[j], new_pred_page[i]
+            ndsg_after = compute_ndcg(new_pred_page, true_page, 10)
+
+            delta_ndcg = abs(ndsg_after - ndsg_before)
+
+            rho = 1 / (1 + math.exp(new_pred_page[j] - new_pred_page[i]))
+            lam = rho * delta_ndcg
+            lambdas[i] += lam * 20
+            lambdas[j] -= lam * 20
+    return lambdas
+
 
 def compute_lambdas(prediction, true_score, query, k=10):
     true_pages = groupby(true_score, query)
     pred_pages = groupby(prediction, query)
 
-    page_start = 0
-    lambdas = [0] * len(prediction)
     print len(true_pages), "pages"
-    for page in xrange(len(true_pages)):
-        print page
-        true_page = true_pages[page]
-        page_len = len(true_page)
 
-        for i in xrange(page_len):
-            for j in xrange(page_len):
+    pool = Pool()
+    lambdas = pool.map(query_lambdas, zip(true_pages, pred_pages))
 
-                pred_page = pred_pages[page]
-
-                ndsg_before = compute_ndcg(pred_page, true_page, 10)
-
-                pred_page[i], pred_page[j] = pred_page[j], pred_page[i]
-                ndsg_after = compute_ndcg(pred_page, true_page, 10)
-
-                delta_ndcg = abs(ndsg_after - ndsg_before)
-
-                rho = 1 / (1 + math.exp(pred_page[j] - pred_page[i]))
-                lam = rho * delta_ndcg
-                lambdas[page_start + i] += lam * 5
-                lambdas[page_start + j] -= lam * 5
-        page_start += page_len
-    return lambdas
+    print sorted(lambdas)
+    return list(chain(*lambdas))
 
 
-def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10, val_file=None):
+def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10):
     print "Loading train file"
     train = np.loadtxt(train_file, delimiter=",", skiprows=1)
     validation = np.loadtxt(validation_file, delimiter=",", skiprows=1)
@@ -170,10 +171,6 @@ def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10, val_
 
         # Compute psedo responces (lambdas)
         # witch act as training label for document
-        start = time.clock()
-        print "  --updating labels"
-        lambdas = compute_lambdas(model_output, scores, queries, k)
-        print "  --done", str(time.clock() - start) + "sec"
 
         # train_score
         start = time.clock()
@@ -187,6 +184,12 @@ def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10, val_
         val_score = ndcg(val_output, val_scores, val_queries, 10)
 
         print "  --iteration validation score " + str(val_score)
+
+        start = time.clock()
+        print "  --updating labels"
+        lambdas = compute_lambdas(model_output, scores, queries, k)
+        print "  --done", str(time.clock() - start) + "sec"
+
         # if(validation_score > best_validation_score):
         #         best_validation_score = validation_score
         #         best_model_len = len(ensemble)
@@ -229,9 +232,4 @@ if __name__ == "__main__":
 
     model = learn(options.train_file, options.val_file, n_trees = 4)
     print evaluate(model, options.predict_file)
-
-
-
-
-
 
