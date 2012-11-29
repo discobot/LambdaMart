@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import math
 # import pandas
 from optparse import OptionParser
 from sklearn.tree import DecisionTreeRegressor
@@ -30,102 +31,163 @@ class Ensemble:
         self.trees = self.trees[:-number]
 
 
+def groupby(score, query):
+    result = []
+    this_query = None
+    this_list = -1
+    for s, q in zip(score, query):
+        if q != this_query:
+            result.append([])
+            this_query = q
+            this_list += 1
+        result[this_list].append(s)
+    return result
+
+
 def compute_point_dcg(arg):
     rel, i = arg
     return (2 ** rel - 1) / math.log(i + 2, 2)
 
+def compute_point_dcg2(arg):
+    rel, i = arg
+    if i == 0:
+        return rel
+    else:
+        return rel / (math.log(1 + i, 2))
+    return
+
 
 def compute_dcg(array):
-    dcg = sum(map(compute_point_dcg, zip(array, range(len(array)))))
+    dcg = map(compute_point_dcg2, zip(array, range(len(array))))
+    return sum(dcg)
 
-    return dcg
 
-
-def compute_ndcg(prediction, true, k):
+def compute_ndcg(prediction, true, k=10):
     prediction = prediction
     true = true
 
     true = sorted(zip(prediction, true), reverse=True, key=lambda x: x[0])
     true = [tr[1] for tr in true]
 
+
     idcg = compute_dcg(sorted(true, reverse=True)[:k])
-    dcg  = compute_dcg(true[:k])
+    dcg = compute_dcg(true[:k])
+
     if idcg == 0:
         return 1
     return dcg / idcg
 
 
-def ndcg(prediction, true_score, queries, k=10):
-    print prediction
-    list_prediction = defaultdict(list)
-    list_true_score = defaultdict(list)
+def ndcg(prediction, true_score, query, k=10):
+    true_pages = groupby(true_score, query)
+    pred_pages = groupby(prediction, query)
 
-    for query, predicted, score in zip(queries, prediction, true_score):
-        list_true_score[query].append(score)
-        list_prediction[query].append(predicted)
+    print true_pages[0]
+    print "-----"
+    print pred_pages[0]
 
     total_ndcg = []
-    for query in list_prediction:
-        total_ndcg.append(compute_ndcg(list_prediction[query], list_true_score[query], k))
-
+    for q in range(len(true_pages)):
+        total_ndcg.append(compute_ndcg(true_pages[q], pred_pages[q], k))
     return sum(total_ndcg) / len(total_ndcg)
 
+def query_lambdas(true_page, pred_page):
+    pass
 
-def compute_lambdas(lambdas):
+def compute_lambdas(prediction, true_score, query, k=10):
+    true_pages = groupby(true_score, query)
+    pred_pages = groupby(prediction, query)
+
+    page_start = 0
+    lambdas = [0] * len(prediction)
+    print len(true_pages), "pages"
+    for page in xrange(len(true_pages)):
+        print page
+        true_page = true_pages[page]
+        page_len = len(true_page)
+
+        for i in xrange(page_len):
+            for j in xrange(page_len):
+
+                pred_page = pred_pages[page]
+
+                ndsg_before = compute_ndcg(pred_page, true_page, 10)
+
+                pred_page[i], pred_page[j] = pred_page[j], pred_page[i]
+                ndsg_after = compute_ndcg(pred_page, true_page, 10)
+
+                delta_ndcg = abs(ndsg_after - ndsg_before)
+
+                rho = 1 / (1 + math.exp(pred_page[j] - pred_page[i]))
+                lam = rho * delta_ndcg
+                lambdas[page_start + i] += lam * 5
+                lambdas[page_start + j] -= lam * 5
+        page_start += page_len
     return lambdas
 
 
-def learn(train_file, ntrees=3, learning_rate=0.1, val_file=None):
+def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10, val_file=None):
     print "Loading train file"
     train = np.loadtxt(train_file, delimiter=",", skiprows=1)
+    validation = np.loadtxt(validation_file, delimiter=",", skiprows=1)
+
     scores = train[:, 0]
+    val_scores = train[:, 0]
+
     queries = train[:, 1]
+    val_queries = validation[:, 1]
+
     features = train[:, 2:]
+    val_features = validation[:, 2:]
+
     ensemble = Ensemble(learning_rate)
 
     print "Training starts..."
-    model_output = np.array([0] * len(features))
-    # validation_output = np.array([0] * len(validation))
+    model_output = np.array([float(0)] * len(features))
+    val_output = np.array([float(0)] * len(validation))
+
     # best_validation_score = 0
     lambdas = np.array(scores)
-    start = time.clock()
-
-    for i in range(ntrees):
-        print "  Iteration: " + str(i)
-        # Compute psedo responces (lambdas)
-        # witch act as training label for document
-        lambdas = compute_lambdas(lambdas)
+    time.clock()
+    for i in range(n_trees):
+        print " Iteration: " + str(i + 1)
 
         # create tree and append it to the model
         print "  --fitting tree"
-        tree = DecisionTreeRegressor()
+        start = time.clock()
+        tree = DecisionTreeRegressor(max_depth=1)
         tree.fit(features, lambdas)
-        print "  ---done"
-        print (time.clock() - start), "s"
+        print "  ---done", str(time.clock() - start) + "sec"
+        print "  --adding tree to ensemble"
         ensemble.add(tree)
 
         # update model score
+        print "  --generating step prediction"
         predictions = tree.predict(features)
-        print features
 
-        for obj in range(len(model_output)):
-            model_output += learning_rate * predictions
+        print "  --updating full model output"
+        model_output += learning_rate * predictions
+
+        # Compute psedo responces (lambdas)
+        # witch act as training label for document
+        start = time.clock()
+        print "  --updating labels"
+        lambdas = compute_lambdas(model_output, scores, queries, k)
+        print "  --done", str(time.clock() - start) + "sec"
 
         # train_score
-        print "  scoring on train"
-        print (time.clock() - start), "s"
+        start = time.clock()
+        print "  --scoring on train"
         train_score = ndcg(model_output, scores, queries, 10)
-        print "    iteration train score " + str(train_score)
-        print (time.clock() - start), "s"
+        print "  --iteration train score " + str(train_score) + ", took " + str(time.clock() - start) + "sec to calculate"
 
         # validation score
-        # if len(validation) != 0:
-        #     for obj in range(len(validation_output)):
-        #         validation_output[i] += learning_rate * tree.eval(validation[i])
+        print "  --scoring on validation"
+        val_output += learning_rate * tree.predict(val_features)
+        val_score = ndcg(val_output, val_scores, val_queries, 10)
 
-        #     validation_score = compute_ndcg(validation_output, validation_target)
-        #     print "    iteration validation score " + str(validation_score)
-        #     if(validation_score > best_validation_score):
+        print "  --iteration validation score " + str(val_score)
+        # if(validation_score > best_validation_score):
         #         best_validation_score = validation_score
         #         best_model_len = len(ensemble)
 
@@ -147,19 +209,27 @@ def learn(train_file, ntrees=3, learning_rate=0.1, val_file=None):
     print "------------------------------------------------"
     return ensemble
 
+def evaluate(model, fn):
+    predict = np.loadtxt(fn, delimiter=",", skiprows=1)
 
-def evaluate(model, features):
-    return model.eval(features)
+    queries = predict[:, 1]
+    features = predict[:, 2:]
+
+    return zip(queries, model.eval(features))
+
 
 if __name__ == "__main__":
     parser = OptionParser()
     parser.add_option("-t", "--train", action="store", type="string", dest="train_file")
-    # parser.add_option("-v", "--validation", action="store", type="string", dest="val_file")
+    parser.add_option("-v", "--validation", action="store", type="string", dest="val_file")
+    parser.add_option("-p", "--predict", action="store", type="string", dest="predict_file")
     options, args = parser.parse_args()
     iterations = 30
     learning_rate = 0.001
 
-    model = learn(options.train_file, )
+    model = learn(options.train_file, options.val_file, n_trees = 4)
+    print evaluate(model, options.predict_file)
+
 
 
 
