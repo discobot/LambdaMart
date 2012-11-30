@@ -98,8 +98,8 @@ def ndcg(prediction, true_score, query, k=10):
 def query_lambdas(page):
     true_page, pred_page = page
     lambdas = [float(0)] * len(true_page)
+    print "."
     for i in xrange(len(true_page)):
-        print i
         for j in xrange(i):
             ndsg_before = compute_ndcg(pred_page, true_page, 10)
             new_pred_page = deepcopy(pred_page)
