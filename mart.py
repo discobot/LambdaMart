@@ -85,9 +85,6 @@ def ndcg(prediction, true_score, query, k=10):
     true_pages = groupby(true_score, query)
     pred_pages = groupby(prediction, query)
 
-    print true_pages[0]
-    print "-----"
-    print pred_pages[0]
 
     total_ndcg = []
     for q in range(len(true_pages)):
@@ -123,12 +120,10 @@ def compute_lambdas(prediction, true_score, query, k=10):
 
     pool = Pool()
     lambdas = pool.map(query_lambdas, zip(true_pages, pred_pages))
-
-    print sorted(lambdas)
     return list(chain(*lambdas))
 
 
-def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10):
+def learn(train_file, validation_file, n_trees=10, learning_rate=1, k=10):
     print "Loading train file"
     train = np.loadtxt(train_file, delimiter=",", skiprows=1)
     validation = np.loadtxt(validation_file, delimiter=",", skiprows=1)
@@ -213,6 +208,7 @@ def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10):
     print "------------------------------------------------"
     return ensemble
 
+
 def evaluate(model, fn):
     predict = np.loadtxt(fn, delimiter=",", skiprows=1)
 
@@ -231,6 +227,6 @@ if __name__ == "__main__":
     iterations = 30
     learning_rate = 0.001
 
-    model = learn(options.train_file, options.val_file, n_trees = 4)
+    model = learn(options.train_file, options.val_file, n_trees = 50)
     print evaluate(model, options.predict_file)
 
