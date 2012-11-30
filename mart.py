@@ -89,12 +89,12 @@ def ndcg(prediction, true_score, query, k=10):
 
 def query_lambdas(page):
     true_page, pred_page = page
-    # print true_page
-    # print pred_page
-    # print true_page[np.argsort(pred_page)]
+    worst_order = np.argsort(true_page)
+    true_page = true_page[worst_order]
+    pred_page = pred_page[worst_order]
+
     page = true_page[np.argsort(pred_page)]
     idcg = compute_dcg(np.sort(page)[::-1])
-    # print page
     position_score = np.zeros((len(true_page), len(true_page)))
 
     for i in xrange(len(true_page)):
@@ -108,14 +108,13 @@ def query_lambdas(page):
                 if page[i] > page[j]:
                     delta_dcg = position_score[i][j] - position_score[i][i]
                     delta_dcg += position_score[j][i] - position_score[j][j]
-                    delta_ndcg = abs(delta_dcg / idcg)
+                    delta_ndcg = delta_dcg / idcg
 
                     rho = 1 / (1 + math.exp(page[i] - page[j]))
                     lam = rho * delta_ndcg
 
-                    lambdas[i] += lam
-                    lambdas[j] -= lam
-    # print lambdas
+                    lambdas[i] -= lam
+                    lambdas[j] += lam
     return lambdas
 
 
@@ -166,7 +165,7 @@ def learn(train_file, validation_file, n_trees=10, learning_rate=1, k=10):
         # create tree and append it to the model
         print "  --fitting tree"
         start = time.clock()
-        tree = DecisionTreeRegressor(max_depth=8)
+        tree = DecisionTreeRegressor(max_depth=12)
         # print "Distinct lambdas", set(lambdas)
         tree.fit(features, lambdas)
 
@@ -226,8 +225,6 @@ def evaluate(model, fn):
     features = predict[:, 2:]
 
     results = model.eval(features)
-    print "Distinct results"
-    print set(results)
     return zip(queries, results)
 
 
