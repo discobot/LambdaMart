@@ -135,25 +135,25 @@ def mart_responces(prediction, true_score):
     return true_score - prediction
 
 
-def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10):
+def learn(train_file, n_trees=10, learning_rate=0.1, k=10):
     print "Loading train file"
     train = np.loadtxt(train_file, delimiter=",", skiprows=1)
-    validation = np.loadtxt(validation_file, delimiter=",", skiprows=1)
+    # validation = np.loadtxt(validation_file, delimiter=",", skiprows=1)
 
     scores = train[:, 0]
-    val_scores = train[:, 0]
+    # val_scores = train[:, 0]
 
     queries = train[:, 1]
-    val_queries = validation[:, 1]
+    # val_queries = validation[:, 1]
 
     features = train[:, 3:]
-    val_features = validation[:, 3:]
+    # val_features = validation[:, 3:]
 
     ensemble = Ensemble(learning_rate)
 
     print "Training starts..."
     model_output = np.array([float(0)] * len(features))
-    val_output = np.array([float(0)] * len(validation))
+    # val_output = np.array([float(0)] * len(validation))
 
     # print model_output
     # best_validation_score = 0
@@ -195,12 +195,12 @@ def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10):
         train_score = ndcg(model_output, scores, queries, 10)
         print "  --iteration train score " + str(train_score) + ", took " + str(time.clock() - start) + "sec to calculate"
 
-        # validation score
-        print "  --scoring on validation"
-        val_output += learning_rate * tree.predict(val_features)
-        val_score = ndcg(val_output, val_scores, val_queries, 10)
+        # # validation score
+        # print "  --scoring on validation"
+        # val_output += learning_rate * tree.predict(val_features)
+        # val_score = ndcg(val_output, val_scores, val_queries, 10)
 
-        print "  --iteration validation score " + str(val_score)
+        # print "  --iteration validation score " + str(val_score)
 
         # if(validation_score > best_validation_score):
         #         best_validation_score = validation_score
@@ -215,8 +215,8 @@ def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10):
         # ensemble.remove(len(ensemble) - best_model_len)
 
     # finishing up
-    print "final quality evaluation"
-    # train_score = compute_ndcg(ensemble.eval(features), scores)
+    # print "final quality evaluation"
+    train_score = compute_ndcg(ensemble.eval(features), scores)
     # test_score = compute_ndcg(ensemble.eval(validation), validation_score)
 
     # print "train %s, test %s" % (train_score, test_score)
@@ -229,7 +229,7 @@ def evaluate(model, fn):
     predict = np.loadtxt(fn, delimiter=",", skiprows=1)
 
     queries = predict[:, 1]
-    doc_id  = predict[:, 2] 
+    doc_id  = predict[:, 2]
     features = predict[:, 3:]
 
     results = model.eval(features)
@@ -242,12 +242,14 @@ def evaluate(model, fn):
 if __name__ == "__main__":
     parser = OptionParser()
     parser.add_option("-t", "--train", action="store", type="string", dest="train_file")
-    parser.add_option("-v", "--validation", action="store", type="string", dest="val_file")
+    # parser.add_option("-v", "--validation", action="store", type="string", dest="val_file")
     parser.add_option("-p", "--predict", action="store", type="string", dest="predict_file")
     options, args = parser.parse_args()
     iterations = 30
     learning_rate = 0.001
 
-    model = learn(options.train_file, options.val_file, n_trees=200)
+    model = learn(options.train_file,
+                  # options.val_file,
+                  n_trees=200)
     evaluate(model, options.predict_file)
 
