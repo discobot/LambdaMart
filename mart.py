@@ -63,7 +63,7 @@ def compute_point_dcg2(arg):
 
 
 def compute_dcg(array):
-    dcg = map(compute_point_dcg2, zip(array, range(len(array))))
+    dcg = map(compute_point_dcg, zip(array, range(len(array))))
     return sum(dcg)
 
 
@@ -106,9 +106,11 @@ def query_lambdas(page):
     for i in xrange(len(true_page)):
         for j in xrange(len(true_page)):
                 if page[i] > page[j]:
+
                     delta_dcg = position_score[i][j] - position_score[i][i]
                     delta_dcg += position_score[j][i] - position_score[j][j]
-                    delta_ndcg = delta_dcg / idcg
+
+                    delta_ndcg = abs(delta_dcg / idcg)
 
                     rho = 1 / (1 + math.exp(page[i] - page[j]))
                     lam = rho * delta_ndcg
@@ -129,7 +131,11 @@ def compute_lambdas(prediction, true_score, query, k=10):
     return list(chain(*lambdas))
 
 
-def learn(train_file, validation_file, n_trees=10, learning_rate=1, k=10):
+def mart_responces(prediction, true_score):
+    return true_score - prediction
+
+
+def learn(train_file, validation_file, n_trees=10, learning_rate=0.1, k=10):
     print "Loading train file"
     train = np.loadtxt(train_file, delimiter=",", skiprows=1)
     validation = np.loadtxt(validation_file, delimiter=",", skiprows=1)
@@ -140,8 +146,8 @@ def learn(train_file, validation_file, n_trees=10, learning_rate=1, k=10):
     queries = train[:, 1]
     val_queries = validation[:, 1]
 
-    features = train[:, 2:]
-    val_features = validation[:, 2:]
+    features = train[:, 3:]
+    val_features = validation[:, 3:]
 
     ensemble = Ensemble(learning_rate)
 
@@ -159,13 +165,14 @@ def learn(train_file, validation_file, n_trees=10, learning_rate=1, k=10):
         # witch act as training label for document
         start = time.clock()
         print "  --generating labels"
-        lambdas = compute_lambdas(model_output, scores, queries, k)
+        # lambdas = compute_lambdas(model_output, scores, queries, k)
+        lambdas = mart_responces(model_output, scores)
         print "  --done", str(time.clock() - start) + "sec"
 
         # create tree and append it to the model
         print "  --fitting tree"
         start = time.clock()
-        tree = DecisionTreeRegressor(max_depth=12)
+        tree = DecisionTreeRegressor(max_depth=2)
         # print "Distinct lambdas", set(lambdas)
         tree.fit(features, lambdas)
 
@@ -222,10 +229,14 @@ def evaluate(model, fn):
     predict = np.loadtxt(fn, delimiter=",", skiprows=1)
 
     queries = predict[:, 1]
-    features = predict[:, 2:]
+    doc_id  = predict[:, 2] 
+    features = predict[:, 3:]
 
     results = model.eval(features)
-    return zip(queries, results)
+    writer = csv.writer(open("result.csv"))
+    for line in zip(queries, results, doc_id):
+            writer.writerow(line)
+    return "OK"
 
 
 if __name__ == "__main__":
@@ -237,6 +248,6 @@ if __name__ == "__main__":
     iterations = 30
     learning_rate = 0.001
 
-    model = learn(options.train_file, options.val_file, n_trees=10)
+    model = learn(options.train_file, options.val_file, n_trees=200)
     evaluate(model, options.predict_file)
 
