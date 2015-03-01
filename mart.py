@@ -37,97 +37,106 @@ class Ensemble:
 def groupby(score, query):
     result = []
     this_query = None
-    this_list = -1
     for s, q in zip(score, query):
         if q != this_query:
             result.append([])
             this_query = q
-            this_list += 1
-        result[this_list].append(s)
+        result[-1].append(s)
     result = map(np.array, result)
     return result
 
 
-def compute_point_dcg(arg):
-    rel, i = arg
-    return (2 ** rel - 1) / math.log(i + 2, 2)
+def point_dcg(arg):
+    i, label = arg
+    return (2 ** label - 1) / math.log(i + 2, 2)
 
 
-def compute_point_dcg2(arg):
-    rel, i = arg
-    if i == 0:
-        return rel
+def dcg(scores):
+    return sum(map(point_dcg, enumerate(scores)))
+
+
+def ndcg(page, k=10):
+    model_top = page[:k]
+
+    true_top = np.array([])
+    if len(page) > 10:
+        true_top = np.partition(page, -10)[-k:]
+        true_top.sort()
     else:
-        return rel / (math.log(1 + i, 2))
-    return
+        true_top = np.sort(page)
+    true_top = true_top[::-1]
 
 
-def compute_dcg(array):
-    dcg = map(compute_point_dcg, zip(array, range(len(array))))
-    return sum(dcg)
+    max_dcg = dcg(true_top)
+    model_dcg = dcg(model_top)
 
-
-def compute_ndcg(page, k=10):
-    idcg = compute_dcg(np.sort(page)[::-1][:k])
-    dcg = compute_dcg(page[:k])
-
-    if idcg == 0:
+    if max_dcg == 0:
         return 1
 
-    return dcg / idcg
+    return model_dcg / max_dcg
 
 
-def ndcg(prediction, true_score, query, k=10):
+def score(prediction, true_score, query, k=10):
     true_pages = groupby(true_score, query)
-    pred_pages = groupby(prediction, query)
+    model_pages = groupby(prediction, query)
 
     total_ndcg = []
-    for q in range(len(true_pages)):
-        total_ndcg.append(compute_ndcg(true_pages[q][np.argsort(pred_pages[q])[::-1]], k))
+
+    for true_page, model_page in zip(true_pages, model_pages):
+        page = true_page[np.argsort(model_page)[::-1]]
+        total_ndcg.append(ndcg(page, k))
+
     return sum(total_ndcg) / len(total_ndcg)
 
 
-def query_lambdas(page):
-    true_page, pred_page = page
+def query_lambdas(page, k=10):
+    true_page, model_page = page
     worst_order = np.argsort(true_page)
+
     true_page = true_page[worst_order]
-    pred_page = pred_page[worst_order]
+    model_page = model_page[worst_order]
+ 
 
-    page = true_page[np.argsort(pred_page)]
-    idcg = compute_dcg(np.sort(page)[::-1])
-    position_score = np.zeros((len(true_page), len(true_page)))
+    model_order = np.argsort(model_page)
 
-    for i in xrange(len(true_page)):
-        for j in xrange(len(true_page)):
-            position_score[i, j] = compute_point_dcg((page[i], j))
+    idcg = dcg(np.sort(true_page)[-10:][::-1])
 
-    lambdas = np.zeros(len(true_page))
+    size = len(true_page)
+    position_score = np.zeros((size, size))
 
-    for i in xrange(len(true_page)):
-        for j in xrange(len(true_page)):
-                if page[i] > page[j]:
+    for i in xrange(size):
+        for j in xrange(size):
+            position_score[model_order[i], model_order[j]] = \
+                point_dcg((model_order[j], true_page[model_order[i]]))
 
-                    delta_dcg = position_score[i][j] - position_score[i][i]
+    lambdas = np.zeros(size)
+
+    for i in xrange(size):
+        for j in xrange(size):
+                if true_page[i] > true_page[j]:
+
+                    delta_dcg  = position_score[i][j] - position_score[i][i]
                     delta_dcg += position_score[j][i] - position_score[j][j]
 
                     delta_ndcg = abs(delta_dcg / idcg)
 
-                    rho = 1 / (1 + math.exp(page[i] - page[j]))
+                    rho = 1 / (1 + math.exp(model_page[i] - model_page[j]))
+
                     lam = rho * delta_ndcg
 
-                    lambdas[i] -= lam
-                    lambdas[j] += lam
+                    lambdas[j] -= lam
+                    lambdas[i] += lam
     return lambdas
 
 
 def compute_lambdas(prediction, true_score, query, k=10):
     true_pages = groupby(true_score, query)
-    pred_pages = groupby(prediction, query)
+    model_pages = groupby(prediction, query)
 
     print len(true_pages), "pages"
 
     pool = Pool()
-    lambdas = pool.map(query_lambdas, zip(true_pages, pred_pages))
+    lambdas = pool.map(query_lambdas, zip(true_pages, model_pages))
     return list(chain(*lambdas))
 
 
@@ -135,10 +144,9 @@ def mart_responces(prediction, true_score):
     return true_score - prediction
 
 
-def learn(train_file, n_trees=10, learning_rate=0.1, k=10):
+def learn(train_file, n_trees=10, learning_rate=0.1, k=10, validate=False):
     print "Loading train file"
     train = np.loadtxt(train_file, delimiter=",", skiprows=1)
-    # validation = np.loadtxt(validation_file, delimiter=",", skiprows=1)
 
     scores = train[:, 0]
     # val_scores = train[:, 0]
@@ -152,10 +160,9 @@ def learn(train_file, n_trees=10, learning_rate=0.1, k=10):
     ensemble = Ensemble(learning_rate)
 
     print "Training starts..."
-    model_output = np.array([float(0)] * len(features))
+    model_output = np.zeros(len(features))
     # val_output = np.array([float(0)] * len(validation))
 
-    # print model_output
     # best_validation_score = 0
     time.clock()
     for i in range(n_trees):
@@ -165,18 +172,20 @@ def learn(train_file, n_trees=10, learning_rate=0.1, k=10):
         # witch act as training label for document
         start = time.clock()
         print "  --generating labels"
-        # lambdas = compute_lambdas(model_output, scores, queries, k)
-        lambdas = mart_responces(model_output, scores)
-        print "  --done", str(time.clock() - start) + "sec"
-
+        lambdas = compute_lambdas(model_output, scores, queries, k)
+        
+        print zip(lambdas, scores)
+        #lambdas = mart_responces(model_output, scores)
+        print "  --done", str(time.clock() - start) + " sec"
+ 
         # create tree and append it to the model
         print "  --fitting tree"
         start = time.clock()
-        tree = DecisionTreeRegressor(max_depth=2)
+        tree = DecisionTreeRegressor(max_depth=6)
         # print "Distinct lambdas", set(lambdas)
         tree.fit(features, lambdas)
 
-        print "  ---done", str(time.clock() - start) + "sec"
+        print "  ---done", str(time.clock() - start) + " sec"
         print "  --adding tree to ensemble"
         ensemble.add(tree)
 
@@ -192,7 +201,7 @@ def learn(train_file, n_trees=10, learning_rate=0.1, k=10):
         # train_score
         start = time.clock()
         print "  --scoring on train"
-        train_score = ndcg(model_output, scores, queries, 10)
+        train_score = score(model_output, scores, queries, 10)
         print "  --iteration train score " + str(train_score) + ", took " + str(time.clock() - start) + "sec to calculate"
 
         # # validation score
@@ -225,7 +234,7 @@ def learn(train_file, n_trees=10, learning_rate=0.1, k=10):
     return ensemble
 
 
-def evaluate(model, fn):
+def predict(model, fn):
     predict = np.loadtxt(fn, delimiter=",", skiprows=1)
 
     queries = predict[:, 1]
@@ -242,14 +251,17 @@ def evaluate(model, fn):
 if __name__ == "__main__":
     parser = OptionParser()
     parser.add_option("-t", "--train", action="store", type="string", dest="train_file")
-    # parser.add_option("-v", "--validation", action="store", type="string", dest="val_file")
+    parser.add_option("-v", "--validation", action="store_true", dest="validate")
     parser.add_option("-p", "--predict", action="store", type="string", dest="predict_file")
+
     options, args = parser.parse_args()
     iterations = 30
     learning_rate = 0.001
 
     model = learn(options.train_file,
-                  # options.val_file,
-                  n_trees=200)
-    evaluate(model, options.predict_file)
+                  validate = options.validate,
+                  n_trees = 200)
+
+    if options.predict_file:
+        predict(model, options.predict_file)
 
