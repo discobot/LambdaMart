@@ -3,7 +3,7 @@ LambdaMart
 
 A small, readable LambdaMART implementation in Python: gradient-boosted
 regression trees trained on LambdaRank gradients (NDCG-based pairwise
-pseudo-responses).
+pseudo-responses), with the Newton-step leaf values from the paper.
 
 Reference: Burges, [*From RankNet to LambdaRank to LambdaMART: An
 Overview*](https://www.microsoft.com/en-us/research/publication/from-ranknet-to-lambdarank-to-lambdamart-an-overview/) (2010).

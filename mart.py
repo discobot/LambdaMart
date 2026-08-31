@@ -1,4 +1,5 @@
-"""LambdaMART: gradient-boosted trees trained on LambdaRank gradients.
+"""LambdaMART: gradient-boosted trees trained on LambdaRank gradients,
+with Newton-step leaf values (sum of lambdas over sum of second derivatives).
 
 Expects CSV input with a header row and columns:
     label, query_id, doc_id, feature_1, ..., feature_n
@@ -64,16 +65,18 @@ def mean_ndcg(model_scores: np.ndarray, labels: np.ndarray,
 
 
 def query_lambdas(labels: np.ndarray, model_scores: np.ndarray,
-                  k: int = 10) -> np.ndarray:
-    """LambdaRank gradients for one query.
+                  k: int = 10) -> tuple[np.ndarray, np.ndarray]:
+    """LambdaRank gradients and second derivatives for one query.
 
     For each pair (i, j) with labels[i] > labels[j]:
         lambda_ij = |dNDCG from swapping i and j| / (1 + exp(s_i - s_j))
     accumulated positively into i (push up) and negatively into j (push down).
+    The second derivatives w_ij = rho * (1 - rho) * |dNDCG| accumulate
+    positively into both documents; they are the Newton-step denominators.
     """
     idcg = dcg(np.sort(labels)[::-1], k)
     if idcg == 0:
-        return np.zeros(len(labels))
+        return np.zeros(len(labels)), np.zeros(len(labels))
 
     # position of each document in the model's current ranking (0 = best)
     order = np.argsort(model_scores)[::-1]
@@ -88,16 +91,31 @@ def query_lambdas(labels: np.ndarray, model_scores: np.ndarray,
                         * np.subtract.outer(discount, discount)) / idcg
     rho = 1.0 / (1.0 + np.exp(np.subtract.outer(model_scores, model_scores)))
     pair_lambda = np.where(np.greater.outer(labels, labels), rho * delta_ndcg, 0.0)
+    pair_w = pair_lambda * (1.0 - rho)
 
-    return pair_lambda.sum(axis=1) - pair_lambda.sum(axis=0)
+    lambdas = pair_lambda.sum(axis=1) - pair_lambda.sum(axis=0)
+    weights = pair_w.sum(axis=1) + pair_w.sum(axis=0)
+    return lambdas, weights
 
 
 def compute_lambdas(model_scores: np.ndarray, labels: np.ndarray,
-                    queries: np.ndarray, k: int = 10) -> np.ndarray:
+                    queries: np.ndarray, k: int = 10
+                    ) -> tuple[np.ndarray, np.ndarray]:
     lambdas = np.zeros(len(labels))
+    weights = np.zeros(len(labels))
     for s in query_slices(queries):
-        lambdas[s] = query_lambdas(labels[s], model_scores[s], k)
-    return lambdas
+        lambdas[s], weights[s] = query_lambdas(labels[s], model_scores[s], k)
+    return lambdas, weights
+
+
+def newton_leaf_values(tree: DecisionTreeRegressor, features: np.ndarray,
+                       lambdas: np.ndarray, weights: np.ndarray) -> None:
+    """Replace each leaf's value with the Newton step: sum(lambda) / sum(w)."""
+    leaves = tree.apply(features)
+    num = np.bincount(leaves, weights=lambdas, minlength=tree.tree_.node_count)
+    den = np.bincount(leaves, weights=weights, minlength=tree.tree_.node_count)
+    values = np.divide(num, den, out=np.zeros_like(num), where=den > 0)
+    tree.tree_.value[:, 0, 0] = values
 
 
 def load(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -119,10 +137,11 @@ def learn(train_file: str, n_trees: int = 200, learning_rate: float = 0.1,
     for i in range(n_trees):
         start = time.perf_counter()
 
-        lambdas = compute_lambdas(model_scores, labels, queries, k)
+        lambdas, weights = compute_lambdas(model_scores, labels, queries, k)
 
         tree = DecisionTreeRegressor(max_depth=max_depth)
         tree.fit(features, lambdas)
+        newton_leaf_values(tree, features, lambdas, weights)
         ensemble.add(tree)
 
         model_scores += learning_rate * tree.predict(features)
