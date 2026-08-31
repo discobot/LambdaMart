@@ -20,13 +20,3 @@ pip install numpy scikit-learn
 python mart.py -t train.csv -p test.csv        # writes result.csv
 python mart.py -t train.csv -n 100 -r 0.05     # 100 trees, lr 0.05
 ```
-
-Note
-----
-
-⚠️ If you copied this code before 2026: the original (2013) version had a
-broken gradient — the ΔNDCG in the lambda computation used document indices
-instead of the model's current ranking positions, so the lambdas did not
-follow the NDCG gradient. It was also Python 2 and crashed at the end of
-training. The current version is fixed, verified against a brute-force
-swap computation, and runs on Python 3.10+.
